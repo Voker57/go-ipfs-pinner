@@ -17,6 +17,8 @@ import (
 	util "github.com/ipfs/go-ipfs-util"
 )
 
+var test_prefix = "test/"
+
 var rand = util.NewTimeSeededRand()
 
 func randNode() (*mdag.ProtoNode, cid.Cid) {
@@ -62,7 +64,7 @@ func TestPinnerBasic(t *testing.T) {
 	dserv := mdag.NewDAGService(bserv)
 
 	// TODO does pinner need to share datastore with blockservice?
-	p := NewPinner(dstore, dserv, dserv)
+	p := NewPinner(dserv, dstore)
 
 	a, ak := randNode()
 	err := dserv.Add(ctx, a)
@@ -71,7 +73,7 @@ func TestPinnerBasic(t *testing.T) {
 	}
 
 	// Pin A{}
-	err = p.Pin(ctx, a, false)
+	err = p.Pin(ctx, test_prefix, a, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -105,7 +107,7 @@ func TestPinnerBasic(t *testing.T) {
 	bk := b.Cid()
 
 	// recursively pin B{A,C}
-	err = p.Pin(ctx, b, true)
+	err = p.Pin(ctx, test_prefix, b, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -132,7 +134,7 @@ func TestPinnerBasic(t *testing.T) {
 	}
 
 	// Add D{A,C,E}
-	err = p.Pin(ctx, d, true)
+	err = p.Pin(ctx, test_prefix, d, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -141,20 +143,12 @@ func TestPinnerBasic(t *testing.T) {
 	assertPinned(t, p, dk, "pinned node not found.")
 
 	// Test recursive unpin
-	err = p.Unpin(ctx, dk, true)
+	err = p.UnpinCidUnderPrefix(test_prefix, dk, true)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	err = p.Flush(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	np, err := LoadPinner(dstore, dserv, dserv)
-	if err != nil {
-		t.Fatal(err)
-	}
+	np := NewPinner(dserv, dstore)
 
 	// Test directly pinned
 	assertPinned(t, np, ak, "Could not find pinned node!")
@@ -188,7 +182,7 @@ func TestIsPinnedLookup(t *testing.T) {
 	dserv := mdag.NewDAGService(bserv)
 
 	// TODO does pinner need to share datastore with blockservice?
-	p := NewPinner(dstore, dserv, dserv)
+	p := NewPinner(dserv, dstore)
 
 	aNodes := make([]*mdag.ProtoNode, aBranchLen)
 	aKeys := make([]cid.Cid, aBranchLen)
@@ -211,7 +205,7 @@ func TestIsPinnedLookup(t *testing.T) {
 	}
 
 	// Pin A5 recursively
-	if err := p.Pin(ctx, aNodes[aBranchLen-1], true); err != nil {
+	if err := p.Pin(ctx, test_prefix, aNodes[aBranchLen-1], true); err != nil {
 		t.Fatal(err)
 	}
 
@@ -249,13 +243,13 @@ func TestIsPinnedLookup(t *testing.T) {
 
 	// Pin C recursively
 
-	if err := p.Pin(ctx, c, true); err != nil {
+	if err := p.Pin(ctx, test_prefix, c, true); err != nil {
 		t.Fatal(err)
 	}
 
 	// Pin B recursively
 
-	if err := p.Pin(ctx, b, true); err != nil {
+	if err := p.Pin(ctx, test_prefix, b, true); err != nil {
 		t.Fatal(err)
 	}
 
@@ -265,7 +259,7 @@ func TestIsPinnedLookup(t *testing.T) {
 	assertPinned(t, p, bk, "B should be pinned")
 
 	// Unpin A5 recursively
-	if err := p.Unpin(ctx, aKeys[5], true); err != nil {
+	if err := p.UnpinCidUnderPrefix(test_prefix, aKeys[5], true); err != nil {
 		t.Fatal(err)
 	}
 
@@ -273,7 +267,7 @@ func TestIsPinnedLookup(t *testing.T) {
 	assertUnpinned(t, p, aKeys[4], "A4 should be unpinned")
 
 	// Unpin B recursively
-	if err := p.Unpin(ctx, bk, true); err != nil {
+	if err := p.UnpinCidUnderPrefix(test_prefix, bk, true); err != nil {
 		t.Fatal(err)
 	}
 	assertUnpinned(t, p, bk, "B should be unpinned")
@@ -290,7 +284,7 @@ func TestDuplicateSemantics(t *testing.T) {
 	dserv := mdag.NewDAGService(bserv)
 
 	// TODO does pinner need to share datastore with blockservice?
-	p := NewPinner(dstore, dserv, dserv)
+	p := NewPinner(dserv, dstore)
 
 	a, _ := randNode()
 	err := dserv.Add(ctx, a)
@@ -299,38 +293,22 @@ func TestDuplicateSemantics(t *testing.T) {
 	}
 
 	// pin is recursively
-	err = p.Pin(ctx, a, true)
+	err = p.Pin(ctx, test_prefix, a, true)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	// pinning directly should fail
-	err = p.Pin(ctx, a, false)
-	if err == nil {
-		t.Fatal("expected direct pin to fail")
-	}
-
-	// pinning recursively again should succeed
-	err = p.Pin(ctx, a, true)
+	// pinning directly should succeed
+	err = p.Pin(ctx, test_prefix, a, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-}
 
-func TestFlush(t *testing.T) {
-	dstore := dssync.MutexWrap(ds.NewMapDatastore())
-	bstore := blockstore.NewBlockstore(dstore)
-	bserv := bs.New(bstore, offline.Exchange(bstore))
-
-	dserv := mdag.NewDAGService(bserv)
-	p := NewPinner(dstore, dserv, dserv)
-	_, k := randNode()
-
-	p.PinWithMode(k, Recursive)
-	if err := p.Flush(context.Background()); err != nil {
+	// pinning recursively again should still not fail
+	err = p.Pin(ctx, test_prefix, a, true)
+	if err != nil {
 		t.Fatal(err)
 	}
-	assertPinned(t, p, k, "expected key to still be pinned")
 }
 
 func TestPinRecursiveFail(t *testing.T) {
@@ -340,7 +318,7 @@ func TestPinRecursiveFail(t *testing.T) {
 	bserv := bs.New(bstore, offline.Exchange(bstore))
 	dserv := mdag.NewDAGService(bserv)
 
-	p := NewPinner(dstore, dserv, dserv)
+	p := NewPinner(dserv, dstore)
 
 	a, _ := randNode()
 	b, _ := randNode()
@@ -353,7 +331,7 @@ func TestPinRecursiveFail(t *testing.T) {
 	mctx, cancel := context.WithTimeout(ctx, time.Millisecond)
 	defer cancel()
 
-	err = p.Pin(mctx, a, true)
+	err = p.Pin(mctx, test_prefix, a, true)
 	if err == nil {
 		t.Fatal("should have failed to pin here")
 	}
@@ -371,7 +349,7 @@ func TestPinRecursiveFail(t *testing.T) {
 	// this one is time based... but shouldnt cause any issues
 	mctx, cancel = context.WithTimeout(ctx, time.Second)
 	defer cancel()
-	err = p.Pin(mctx, a, true)
+	err = p.Pin(mctx, test_prefix, a, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -385,7 +363,7 @@ func TestPinUpdate(t *testing.T) {
 	bserv := bs.New(bstore, offline.Exchange(bstore))
 
 	dserv := mdag.NewDAGService(bserv)
-	p := NewPinner(dstore, dserv, dserv)
+	p := NewPinner(dserv, dstore)
 	n1, c1 := randNode()
 	n2, c2 := randNode()
 
@@ -396,21 +374,21 @@ func TestPinUpdate(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := p.Pin(ctx, n1, true); err != nil {
+	if err := p.Pin(ctx, test_prefix, n1, true); err != nil {
 		t.Fatal(err)
 	}
 
-	if err := p.Update(ctx, c1, c2, true); err != nil {
+	if err := p.Update(ctx, test_prefix+c1.String(), c2); err != nil {
 		t.Fatal(err)
 	}
 
 	assertPinned(t, p, c2, "c2 should be pinned now")
 	assertUnpinned(t, p, c1, "c1 should no longer be pinned")
 
-	if err := p.Update(ctx, c2, c1, false); err != nil {
+	if err := p.Update(ctx, test_prefix+c1.String(), c1); err != nil {
 		t.Fatal(err)
 	}
 
-	assertPinned(t, p, c2, "c2 should be pinned still")
+	assertUnpinned(t, p, c2, "c2 should no longer be pinned")
 	assertPinned(t, p, c1, "c1 should be pinned now")
 }
